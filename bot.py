@@ -8,8 +8,8 @@ from threading import Lock
 import time
 
 # دریافت توکن‌ها از متغیر محیطی
-BOT_TOKENS = eval(os.getenv('BOT_TOKENS', '["token1", "token2", "token3", "token4"]'))
-OWNER_ID = int(os.getenv('OWNER_ID', '123456789'))
+BOT_TOKENS = eval(os.getenv('BOT_TOKENS', '["8488494454:AAE1sEmRtRqrbHDL_qg1UiGl0TwJLjj4ByM","8238948579:AAGktvxW6LhuKBXRRA_WsfD9n2bsMMC-izg","8269701842:AAEDLw8chE3jfcODYEw30Et636z3-wX7kPQ","8228864219:AAHuEkDuF5P9WvMNNws9wZigq12RTDdv4uw"]'))
+OWNER_ID = int(os.getenv('OWNER_ID', '7798986445'))
 
 class BotConfig:
     def __init__(self):
