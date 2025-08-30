@@ -1,3 +1,4 @@
+import os
 import asyncio
 import random
 from telegram import Bot
@@ -6,30 +7,22 @@ import logging
 from threading import Lock
 import time
 
-# توکن‌های نمونه - شما باید این‌ها را با توکن‌های واقعی جایگزین کنید
-BOT_TOKENS = [
-    "8488494454:AAE1sEmRtRqrbHDL_qg1UiGl0TwJLjj4ByM",  # ربات ۱ - جایگزین کن
-    "8238948579:AAGktvxW6LhuKBXRRA_WsfD9n2bsMMC-izg",  # ربات ۲ - جایگزین کن
-    "8269701842:AAEDLw8chE3jfcODYEw30Et636z3-wX7kPQ",  # ربات ۳ - جایگزین کن
-    "8228864219:AAHuEkDuF5P9WvMNNws9wZigq12RTDdv4uw"   # ربات ۴ - جایگزین کن
-]
+# دریافت توکن‌ها از متغیر محیطی
+BOT_TOKENS = eval(os.getenv('BOT_TOKENS', '["token1", "token2", "token3", "token4"]'))
+OWNER_ID = int(os.getenv('OWNER_ID', '123456789'))
 
-# تنظیمات اولیه - هر ربات تنظیمات خودش رو داره
 class BotConfig:
     def __init__(self):
         self.groups_list = []
-        self.admins = [7798986445]  # مالک اصلی - باید جایگزین شود
-        self.message_delay = 0.1
+        self.admins = [OWNER_ID]
+        self.message_delay = 0.2
         self.active_broadcast = False
         self.broadcast_message = ""
         self.broadcast_lock = Lock()
         self.current_task = None
-        self.last_activity = time.time()
 
-# ایجاد کانفیگ برای هر ربات
 bot_configs = {token: BotConfig() for token in BOT_TOKENS}
 
-# تنظیمات لاگ
 logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     level=logging.INFO
@@ -140,10 +133,8 @@ async def broadcast_loop(config, token, update):
                 success_count += 1
             total_attempts += 1
             
-            # تأخیر بین ارسال‌ها
             await asyncio.sleep(config.message_delay + random.uniform(0.1, 0.3))
         
-        # تأخیر قبل از شروع دور جدید
         if config.active_broadcast:
             await asyncio.sleep(1)
     
@@ -173,7 +164,6 @@ async def start_pim(update, context):
         config.active_broadcast = True
         await update.message.reply_text("🚀 شروع ارسال پیام...")
         
-        # اجرای عملیات ارسال
         config.current_task = asyncio.create_task(
             broadcast_loop_wrapper(config, token, update)
         )
@@ -218,18 +208,17 @@ def main():
     
     for token in BOT_TOKENS:
         try:
-            app = Application.builder().token(token).build()
+            application = Application.builder().token(token).build()
             
-            # اضافه کردن دستورات
-            app.add_handler(CommandHandler("start", start))
-            app.add_handler(CommandHandler("addadmin", add_admin))
-            app.add_handler(CommandHandler("addgroup", add_group))
-            app.add_handler(CommandHandler("setdelay", set_delay))
-            app.add_handler(CommandHandler("set_message", set_message))
-            app.add_handler(CommandHandler("start_pim", start_pim))
-            app.add_handler(CommandHandler("stop_pim", stop_pim))
+            application.add_handler(CommandHandler("start", start))
+            application.add_handler(CommandHandler("addadmin", add_admin))
+            application.add_handler(CommandHandler("addgroup", add_group))
+            application.add_handler(CommandHandler("setdelay", set_delay))
+            application.add_handler(CommandHandler("set_message", set_message))
+            application.add_handler(CommandHandler("start_pim", start_pim))
+            application.add_handler(CommandHandler("stop_pim", stop_pim))
             
-            applications.append(app)
+            applications.append(application)
             
         except Exception as e:
             logger.error(f"Error starting bot {token}: {e}")
