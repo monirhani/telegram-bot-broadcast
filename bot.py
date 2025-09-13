@@ -1,8 +1,8 @@
 import os
 import asyncio
 import random
-from telegram import Bot, Update
-from telegram.ext import Application, CommandHandler, ContextTypes
+from telegram import Bot, Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram.ext import Application, CommandHandler, ContextTypes, CallbackQueryHandler
 import logging
 from threading import Lock
 import time
@@ -19,12 +19,13 @@ class BotConfig:
         self.message_delay = 0.1
         self.active_broadcast = False
         self.broadcast_message = ""
-        self.max_messages = 0  # 0 = unlimited
+        self.max_messages = 0
         self.sent_messages = 0
         self.broadcast_lock = Lock()
         self.current_task = None
         self.start_time = None
         self.status = "⏸️ غیرفعال"
+        self.last_panel_message_id = None
 
 bot_configs = {token: BotConfig() for token in BOT_TOKENS}
 
@@ -34,6 +35,66 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+def create_panel_keyboard():
+    keyboard = [
+        [InlineKeyboardButton("📊 آمار ربات", callback_data="stats")],
+        [InlineKeyboardButton("⚙️ تنظیمات", callback_data="settings")],
+        [InlineKeyboardButton("👥 مدیریت گروه‌ها", callback_data="groups")],
+        [InlineKeyboardButton("🚀 شروع ارسال", callback_data="start_broadcast"),
+         InlineKeyboardButton("⏹ توقف ارسال", callback_data="stop_broadcast")],
+        [InlineKeyboardButton("🔄 بروزرسانی پنل", callback_data="refresh")]
+    ]
+    return InlineKeyboardMarkup(keyboard)
+
+def create_settings_keyboard():
+    keyboard = [
+        [InlineKeyboardButton("⚡ تنظیم سرعت", callback_data="set_delay")],
+        [InlineKeyboardButton("🔢 تنظیم تعداد پیام", callback_data="set_count")],
+        [InlineKeyboardButton("📝 تنظیم پیام", callback_data="set_message")],
+        [InlineKeyboardButton("◀️ بازگشت", callback_data="back_to_main")]
+    ]
+    return InlineKeyboardMarkup(keyboard)
+
+def create_groups_keyboard():
+    keyboard = [
+        [InlineKeyboardButton("➕ افزودن گروه", callback_data="add_group")],
+        [InlineKeyboardButton("➖ حذف گروه", callback_data="remove_group")],
+        [InlineKeyboardButton("📋 لیست گروه‌ها", callback_data="list_groups")],
+        [InlineKeyboardButton("◀️ بازگشت", callback_data="back_to_main")]
+    ]
+    return InlineKeyboardMarkup(keyboard)
+
+async def update_panel_message(update, context, config):
+    if config.last_panel_message_id:
+        try:
+            uptime = "N/A"
+            if config.start_time:
+                uptime = str(datetime.now() - config.start_time).split('.')[0]
+            
+            panel_text = f"""
+✨ **پنل مدیریت پیشرفته ربات**
+
+▫️ **وضعیت:** `{config.status}`
+▫️ **تعداد گروه‌ها:** `{len(config.groups_list)}`
+▫️ **پیام تنظیم شده:** `{'✅' if config.broadcast_message else '❌'}`
+▫️ **سرعت ارسال:** `{config.message_delay} ثانیه`
+▫️ **تعداد پیام:** `{'∞' if config.max_messages == 0 else config.max_messages}`
+▫️ **ارسال شده:** `{config.sent_messages}`
+▫️ **زمان فعالیت:** `{uptime}`
+
+🎛 **برای مدیریت ربات از دکمه‌های زیر استفاده کنید:**
+            """
+            
+            await context.bot.edit_message_text(
+                chat_id=update.effective_chat.id,
+                message_id=config.last_panel_message_id,
+                text=panel_text,
+                reply_markup=create_panel_keyboard(),
+                parse_mode="Markdown"
+            )
+        except Exception as e:
+            logger.error(f"Error updating panel: {e}")
+
 async def start(update, context):
     token = context.bot.token
     config = bot_configs[token]
@@ -42,22 +103,23 @@ async def start(update, context):
         await update.message.reply_text("❌ دسترسی denied!")
         return
         
-    await update.message.reply_text(
-        "🤖 ربات آماده است!\n\n"
-        "📋 دستورات قابل استفاده:\n"
-        "/addadmin [user_id] - افزودن ادمین\n"
-        "/removeadmin [user_id] - حذف ادمین\n"
-        "/addgroup [group_id] - افزودن گروه\n"
-        "/removegroup [group_id] - حذف گروه\n"
-        "/listgroups - نمایش گروه‌ها\n"
-        "/setdelay [seconds] - تنظیم سرعت\n"
-        "/setcount [number] - تنظیم تعداد پیام (0=نامحدود)\n"
-        "/set_message [پیام] - تنظیم پیام\n"
-        "/clearmessage - حذف پیام تنظیم شده\n"
-        "/panel - نمایش پنل مدیریت\n"
-        "/start_pim - شروع ارسال\n"
-        "/stop_pim - توقف ارسال"
+    panel_text = f"""
+✨ **به پنل مدیریت ربات خوش آمدید!**
+
+▫️ **وضعیت:** `{config.status}`
+▫️ **تعداد گروه‌ها:** `{len(config.groups_list)}`
+▫️ **پیام تنظیم شده:** `{'✅' if config.broadcast_message else '❌'}`
+▫️ **سرعت ارسال:** `{config.message_delay} ثانیه`
+
+🎛 **برای مدیریت ربات از دکمه‌های زیر استفاده کنید:"
+    """
+    
+    message = await update.message.reply_text(
+        panel_text,
+        reply_markup=create_panel_keyboard(),
+        parse_mode="Markdown"
     )
+    config.last_panel_message_id = message.message_id
 
 async def panel(update, context):
     token = context.bot.token
@@ -67,34 +129,152 @@ async def panel(update, context):
         await update.message.reply_text("❌ دسترسی denied!")
         return
     
-    # محاسبه زمان فعالیت
-    uptime = "N/A"
-    if config.start_time:
-        uptime = str(datetime.now() - config.start_time).split('.')[0]
-    
-    # ایجاد پنل شیشه ای
     panel_text = f"""
-╔══════════════════════╗
-║      🚀 پنل مدیریت ربات      ║
-╠══════════════════════╣
-║ 📊 وضعیت: {config.status}
-║ 👥 تعداد گروه‌ها: {len(config.groups_list)}
-║ 📨 پیام تنظیم شده: {'✅' if config.broadcast_message else '❌'}
-║ ⚡ سرعت ارسال: {config.message_delay} ثانیه
-║ 🔢 تعداد پیام: {'∞' if config.max_messages == 0 else config.max_messages}
-║ 📤 ارسال شده: {config.sent_messages}
-║ ⏰ زمان فعالیت: {uptime}
-╠══════════════════════╣
-║ 📋 /listgroups - لیست گروه‌ها
-║ ⚙️ /setdelay - تنظیم سرعت
-║ 🔢 /setcount - تنظیم تعداد
-║ 📝 /set_message - تنظیم پیام
-║ 🚀 /start_pim - شروع ارسال
-║ ⏹️ /stop_pim - توقف ارسال
-╚══════════════════════╝
+✨ **پنل مدیریت پیشرفته ربات**
+
+▫️ **وضعیت:** `{config.status}`
+▫️ **تعداد گروه‌ها:** `{len(config.groups_list)}`
+▫️ **پیام تنظیم شده:** `{'✅' if config.broadcast_message else '❌'}`
+▫️ **سرعت ارسال:** `{config.message_delay} ثانیه`
+▫️ **تعداد پیام:** `{'∞' if config.max_messages == 0 else config.max_messages}`
+▫️ **ارسال شده:** `{config.sent_messages}`
+
+🎛 **برای مدیریت ربات از دکمه‌های زیر استفاده کنید:"
     """
     
-    await update.message.reply_text(panel_text)
+    message = await update.message.reply_text(
+        panel_text,
+        reply_markup=create_panel_keyboard(),
+        parse_mode="Markdown"
+    )
+    config.last_panel_message_id = message.message_id
+
+async def button_handler(update, context):
+    query = update.callback_query
+    await query.answer()
+    
+    token = context.bot.token
+    config = bot_configs[token]
+    
+    if query.from_user.id not in config.admins:
+        await query.message.reply_text("❌ دسترسی denied!")
+        return
+    
+    if query.data == "stats":
+        uptime = "N/A"
+        if config.start_time:
+            uptime = str(datetime.now() - config.start_time).split('.')[0]
+        
+        stats_text = f"""
+📊 **آمار کامل ربات**
+
+• **وضعیت:** `{config.status}`
+• **تعداد گروه‌ها:** `{len(config.groups_list)}`
+• **پیام تنظیم شده:** `{'✅' if config.broadcast_message else '❌'}`
+• **سرعت ارسال:** `{config.message_delay} ثانیه`
+• **تعداد پیام:** `{'∞' if config.max_messages == 0 else config.max_messages}`
+• **ارسال شده:** `{config.sent_messages}`
+• **زمان فعالیت:** `{uptime}`
+• **آخرین بروزرسانی:** `{datetime.now().strftime("%Y-%m-%d %H:%M:%S")}`
+        """
+        
+        await query.edit_message_text(
+            stats_text,
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("◀️ بازگشت", callback_data="back_to_main")]
+            ]),
+            parse_mode="Markdown"
+        )
+    
+    elif query.data == "settings":
+        await query.edit_message_text(
+            "⚙️ **تنظیمات ربات**\n\nلطفاً یکی از گزینه‌های زیر را انتخاب کنید:",
+            reply_markup=create_settings_keyboard(),
+            parse_mode="Markdown"
+        )
+    
+    elif query.data == "groups":
+        await query.edit_message_text(
+            "👥 **مدیریت گروه‌ها**\n\nلطفاً یکی از گزینه‌های زیر را انتخاب کنید:",
+            reply_markup=create_groups_keyboard(),
+            parse_mode="Markdown"
+        )
+    
+    elif query.data == "set_delay":
+        await query.message.reply_text("⚡ لطفاً سرعت ارسال را به ثانیه وارد کنید:\nمثال: /setdelay 0.1")
+    
+    elif query.data == "set_count":
+        await query.message.reply_text("🔢 لطفاً تعداد پیام را وارد کنید (0 برای نامحدود):\nمثال: /setcount 100")
+    
+    elif query.data == "set_message":
+        await query.message.reply_text("📝 لطفاً پیام خود را وارد کنید:\nمثال: /set_message سلام این یک پیام تست است")
+    
+    elif query.data == "add_group":
+        await query.message.reply_text("➕ لطفاً آیدی گروه را وارد کنید:\nمثال: /addgroup -100123456789")
+    
+    elif query.data == "remove_group":
+        await query.message.reply_text("➖ لطفاً آیدی گروه را وارد کنید:\nمثال: /removegroup -100123456789")
+    
+    elif query.data == "list_groups":
+        if not config.groups_list:
+            await query.message.reply_text("📭 هیچ گروهی اضافه نشده است!")
+        else:
+            groups_text = "📋 **لیست گروه‌ها:**\n" + "\n".join([f"• `{group}`" for group in config.groups_list])
+            await query.message.reply_text(groups_text, parse_mode="Markdown")
+    
+    elif query.data == "start_broadcast":
+        await start_pim_callback(query, context)
+    
+    elif query.data == "stop_broadcast":
+        await stop_pim_callback(query, context)
+    
+    elif query.data == "refresh":
+        await update_panel_message(update, context, config)
+    
+    elif query.data == "back_to_main":
+        await update_panel_message(update, context, config)
+
+async def start_pim_callback(query, context):
+    token = context.bot.token
+    config = bot_configs[token]
+    
+    if not config.groups_list:
+        await query.message.reply_text("❌ هیچ گروهی افزوده نشده است! ابتدا گروه اضافه کنید.")
+        return
+        
+    if not config.broadcast_message:
+        await query.message.reply_text("❌ هیچ پیامی تنظیم نشده است! ابتدا پیام تنظیم کنید.")
+        return
+        
+    with config.broadcast_lock:
+        if config.active_broadcast:
+            await query.message.reply_text("⚠️ ارسال در حال حاضر فعال است!")
+            return
+            
+        config.active_broadcast = True
+        await query.message.reply_text("🚀 شروع ارسال پیام...")
+        
+        config.current_task = asyncio.create_task(
+            broadcast_loop_wrapper(config, token, query)
+        )
+    
+    await update_panel_message(query, context, config)
+
+async def stop_pim_callback(query, context):
+    token = context.bot.token
+    config = bot_configs[token]
+    
+    with config.broadcast_lock:
+        if not config.active_broadcast:
+            await query.message.reply_text("⚠️ ارسال از قبل متوقف است!")
+            return
+            
+        config.active_broadcast = False
+        if config.current_task:
+            config.current_task.cancel()
+        await query.message.reply_text("⏹️ ارسال متوقف شد!")
+    
+    await update_panel_message(query, context, config)
 
 async def add_admin(update, context):
     token = context.bot.token
@@ -154,6 +334,7 @@ async def add_group(update, context):
             
         config.groups_list.append(group_id)
         await update.message.reply_text(f"✅ گروه {group_id} افزوده شد!")
+        await update_panel_message(update, context, config)
     except:
         await update.message.reply_text("❌ فرمت صحیح: /addgroup [group_id]")
 
@@ -173,6 +354,7 @@ async def remove_group(update, context):
             
         config.groups_list.remove(group_id)
         await update.message.reply_text(f"✅ گروه {group_id} حذف شد!")
+        await update_panel_message(update, context, config)
     except:
         await update.message.reply_text("❌ فرمت صحیح: /removegroup [group_id]")
 
@@ -202,6 +384,7 @@ async def set_delay(update, context):
     try:
         config.message_delay = max(0.05, float(context.args[0]))
         await update.message.reply_text(f"✅ تأخیر به {config.message_delay} ثانیه تنظیم شد!")
+        await update_panel_message(update, context, config)
     except:
         await update.message.reply_text("❌ فرمت صحیح: /setdelay [seconds]")
 
@@ -218,6 +401,7 @@ async def set_count(update, context):
         config.max_messages = max(0, count)
         count_text = "نامحدود" if count == 0 else str(count)
         await update.message.reply_text(f"✅ تعداد پیام به {count_text} تنظیم شد!")
+        await update_panel_message(update, context, config)
     except:
         await update.message.reply_text("❌ فرمت صحیح: /setcount [number] (0=نامحدود)")
 
@@ -235,6 +419,7 @@ async def set_message(update, context):
         
     config.broadcast_message = " ".join(context.args)
     await update.message.reply_text(f"✅ پیام تنظیم شد:\n{config.broadcast_message}")
+    await update_panel_message(update, context, config)
 
 async def clear_message(update, context):
     token = context.bot.token
@@ -246,6 +431,7 @@ async def clear_message(update, context):
         
     config.broadcast_message = ""
     await update.message.reply_text("✅ پیام تنظیم شده حذف شد!")
+    await update_panel_message(update, context, config)
 
 async def send_message_safe(bot_token, group_id, message):
     try:
@@ -324,6 +510,25 @@ async def broadcast_loop(config, token, update):
             
     return success_count, total_attempts
 
+async def broadcast_loop_wrapper(config, token, update):
+    try:
+        success_count, total_attempts = await broadcast_loop(config, token, update)
+        if config.active_broadcast:
+            await update.message.reply_text(
+                f"✅ ارسال کامل شد!\n"
+                f"📊 آمار:\n"
+                f"• ارسال موفق: {success_count}\n"
+                f"• تلاش‌های کل: {total_attempts}"
+            )
+    except asyncio.CancelledError:
+        await update.message.reply_text("⏹️ ارسال متوقف شد")
+    except Exception as e:
+        logger.error(f"Broadcast error: {e}")
+        await update.message.reply_text(f"❌ خطا در ارسال: {e}")
+    finally:
+        config.active_broadcast = False
+        config.status = "⏸️ غیرفعال"
+
 async def start_pim(update, context):
     token = context.bot.token
     config = bot_configs[token]
@@ -352,25 +557,6 @@ async def start_pim(update, context):
             broadcast_loop_wrapper(config, token, update)
         )
 
-async def broadcast_loop_wrapper(config, token, update):
-    try:
-        success_count, total_attempts = await broadcast_loop(config, token, update)
-        if config.active_broadcast:
-            await update.message.reply_text(
-                f"✅ ارسال کامل شد!\n"
-                f"📊 آمار:\n"
-                f"• ارسال موفق: {success_count}\n"
-                f"• تلاش‌های کل: {total_attempts}"
-            )
-    except asyncio.CancelledError:
-        await update.message.reply_text("⏹️ ارسال متوقف شد")
-    except Exception as e:
-        logger.error(f"Broadcast error: {e}")
-        await update.message.reply_text(f"❌ خطا در ارسال: {e}")
-    finally:
-        config.active_broadcast = False
-        config.status = "⏸️ غیرفعال"
-
 async def stop_pim(update, context):
     token = context.bot.token
     config = bot_configs[token]
@@ -388,6 +574,8 @@ async def stop_pim(update, context):
         if config.current_task:
             config.current_task.cancel()
         await update.message.reply_text("⏹️ ارسال متوقف شد!")
+    
+    await update_panel_message(update, context, config)
 
 def main():
     applications = []
@@ -408,6 +596,7 @@ def main():
             application.add_handler(CommandHandler("clearmessage", clear_message))
             application.add_handler(CommandHandler("start_pim", start_pim))
             application.add_handler(CommandHandler("stop_pim", stop_pim))
+            application.add_handler(CallbackQueryHandler(button_handler))
             
             applications.append(application)
         except Exception as e:
